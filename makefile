@@ -4,7 +4,7 @@ VIRTUALENV_DIR = ${HOME}/.virtualenv
 .PHONY: dev
 dev: ${VIRTUALENV_DIR}/bedwetter
 	source ${VIRTUALENV_DIR}/bedwetter/bin/activate && \
-		pip3.7 install -U flake8 pip && \
+		pip3.7 install -U black pip && \
 		pip3.7 install --editable .
 
 .PHONY: install
@@ -19,6 +19,6 @@ ${VIRTUALENV_DIR}/bedwetter:
 
 .PHONY: lint
 lint:
-	-flake8
+	-black bedwetter
 
 .DEFAULT_GOAL := install

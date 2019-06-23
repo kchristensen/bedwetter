@@ -33,10 +33,11 @@ from time import sleep, time
 
 # Third Party Imports
 import requests
+
 try:
     import automationhat
 except ImportError:
-    print('Unable to import automationhat, continuing in development mode.')
+    print("Unable to import automationhat, continuing in development mode.")
 
 # Global ConfigParser object for configuration options
 CFG = ConfigParser()
@@ -44,7 +45,7 @@ CFG = ConfigParser()
 
 def config_get_path():
     """ Return the path to the config file """
-    return os.path.expanduser('~/.config/bedwetter/bedwetter.cfg')
+    return os.path.expanduser("~/.config/bedwetter/bedwetter.cfg")
 
 
 def config_load():
@@ -58,28 +59,31 @@ def config_update():
     config_file = config_get_path()
 
     try:
-        with open(config_file, 'w') as cfg_handle:
+        with open(config_file, "w") as cfg_handle:
             CFG.write(cfg_handle)
     except EnvironmentError:
-        sys.exit('Error: Could not write to configuration file {}'
-                 .format(config_file))
+        sys.exit("Error: Could not write to configuration file {}".format(config_file))
 
 
 def fetch_forecast():
     """ Fetch forecast information for the next day from Dark Sky """
     try:
-        darksky_url = ('https://api.darksky.net/forecast/'
-                       f'{CFG["bedwetter"]["darksky_api_key"]}/'
-                       f'{CFG["bedwetter"]["latitude"]},'
-                       f'{CFG["bedwetter"]["longitude"]}')
-        request = requests.get(darksky_url, timeout=int(CFG['bedwetter']['timeout']))
-        request.encoding = 'utf-8'
+        darksky_url = (
+            "https://api.darksky.net/forecast/"
+            f'{CFG["bedwetter"]["darksky_api_key"]}/'
+            f'{CFG["bedwetter"]["latitude"]},'
+            f'{CFG["bedwetter"]["longitude"]}'
+        )
+        request = requests.get(darksky_url, timeout=int(CFG["bedwetter"]["timeout"]))
+        request.encoding = "utf-8"
         return request.json()
     except requests.exceptions.Timeout:
-        sys.exit('Error: Dark Sky API timed out after '
-                 f'{CFG["bedwetter"]["timeout"]} seconds')
+        sys.exit(
+            "Error: Dark Sky API timed out after "
+            f'{CFG["bedwetter"]["timeout"]} seconds'
+        )
     except requests.exceptions.RequestException:
-        sys.exit('Error: There was an error connecting to the Dark Sky API')
+        sys.exit("Error: There was an error connecting to the Dark Sky API")
 
 
 def pushover(message, notify):
@@ -87,26 +91,29 @@ def pushover(message, notify):
     try:
         if notify:
             requests.post(
-                'https://api.pushover.net/1/messages.json', data={
-                    'token': CFG['bedwetter']['pushover_token'],
-                    'user': CFG['bedwetter']['pushover_user'],
-                    'message': message
-                }, timeout=int(CFG['bedwetter']['timeout']))
+                "https://api.pushover.net/1/messages.json",
+                data={
+                    "token": CFG["bedwetter"]["pushover_token"],
+                    "user": CFG["bedwetter"]["pushover_user"],
+                    "message": message,
+                },
+                timeout=int(CFG["bedwetter"]["timeout"]),
+            )
         sys.exit(message)
     except requests.exceptions.Timeout:
         sys.exit(f'Error: Pushover API timed out after {CFG["bedwetter"]["timeout"]}')
     except requests.exceptions.RequestException:
-        sys.exit('Error: There was an error connecting to the Pushover API')
+        sys.exit("Error: There was an error connecting to the Pushover API")
 
 
 def water_on():
     """ Start watering """
-    print('Watering for {} seconds.'.format(CFG['bedwetter']['water_duration']))
+    print("Watering for {} seconds.".format(CFG["bedwetter"]["water_duration"]))
     try:
         automationhat.relay.one.on()
         if automationhat.relay.one.is_on():
-            sleep(int(CFG['bedwetter']['water_duration']))
-            CFG['bedwetter']['last_water'] = f'{time():.0f}'
+            sleep(int(CFG["bedwetter"]["water_duration"]))
+            CFG["bedwetter"]["last_water"] = f"{time():.0f}"
             config_update()
             return True
     except NameError as name_e:
@@ -116,7 +123,7 @@ def water_on():
 
 def water_off():
     """ Stop watering """
-    print('Turning water off.')
+    print("Turning water off.")
     try:
         automationhat.relay.one.off()
         if automationhat.relay.one.is_off():
@@ -131,38 +138,52 @@ def main():
     config_load()
     water = False
 
-    forecast = fetch_forecast()['daily']['data'][0]
-    if 'precipType' in forecast and (forecast['precipProbability'] * 100) < \
-            int(CFG['bedwetter']['threshold_percent']) \
-            and forecast['precipType'] == 'rain':
-        print(f'{forecast["precipProbability"] * 100:.0f}% chance of '
-              f'{forecast["precipType"]} in the next day, time to water.')
+    forecast = fetch_forecast()["daily"]["data"][0]
+    if (
+        "precipType" in forecast
+        and (forecast["precipProbability"] * 100)
+        < int(CFG["bedwetter"]["threshold_percent"])
+        and forecast["precipType"] == "rain"
+    ):
+        print(
+            f'{forecast["precipProbability"] * 100:.0f}% chance of '
+            f'{forecast["precipType"]} in the next day, time to water.'
+        )
         water = True
-    elif (int(time()) - int(CFG['bedwetter']['last_water'])) > \
-         (86400 * int(CFG['bedwetter']['threshold_days'])):
-        print(f'It has been more than {CFG["bedwetter"]["threshold_days"]} '
-              'days since last watering, time to water.')
+    elif (int(time()) - int(CFG["bedwetter"]["last_water"])) > (
+        86400 * int(CFG["bedwetter"]["threshold_days"])
+    ):
+        print(
+            f'It has been more than {CFG["bedwetter"]["threshold_days"]} '
+            "days since last watering, time to water."
+        )
         water = True
 
     if water:
         # Water, notify, and exit.
         if not water_on():
-            pushover('Watering failed to start.',
-                     CFG['bedwetter'].getboolean('notify_on_failure'))
+            pushover(
+                "Watering failed to start.",
+                CFG["bedwetter"].getboolean("notify_on_failure"),
+            )
 
         if not water_off():
-            pushover('Watering failed to stop!',
-                     CFG['bedwetter'].getboolean('notify_on_failure'))
+            pushover(
+                "Watering failed to stop!",
+                CFG["bedwetter"].getboolean("notify_on_failure"),
+            )
 
-        pushover('Watering was successful.',
-                 CFG['bedwetter'].getboolean('notify_on_success'))
+        pushover(
+            "Watering was successful.", CFG["bedwetter"].getboolean("notify_on_success")
+        )
     else:
-        pushover('Not watering today.',
-                 CFG['bedwetter'].getboolean('notify_on_inaction'))
+        pushover(
+            "Not watering today.", CFG["bedwetter"].getboolean("notify_on_inaction")
+        )
 
 
 if sys.version_info >= (3, 7):
-    if __name__ == '__main__':
+    if __name__ == "__main__":
         main()
 else:
-    sys.exit('Error: This script requires Python 3.7 or greater')
+    sys.exit("Error: This script requires Python 3.7 or greater")
