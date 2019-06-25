@@ -12,6 +12,9 @@ The rain barrel's spigot is hooked up to soaker hoses in the beds.
 
 ## Configuration
 
+The Automation pHAT requires that I2C be enabled on the Raspberry Pi, which can be done in `raspi-config`
+under the `Interfacing Options` section.
+
 Bedwetter is configured via a config file that should reside at `${HOME}/.config/bedwetter/bedwetter.cfg`
 and contains something along the lines of:
 

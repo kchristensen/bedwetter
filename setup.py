@@ -10,10 +10,10 @@ setup(
     ''',
     include_package_data=True,
     install_requires=[
-        'automationhat ; platform_system=="linux"',
+        'automationhat ; platform_system=="Linux"',
         'configparser',
         'requests',
-        'smbus ; platform_system=="linux"'
+        'smbus ; platform_system=="Linux"'
     ],
     name='bedwetter',
     packages=['bedwetter'],
