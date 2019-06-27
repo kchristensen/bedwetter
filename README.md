@@ -20,7 +20,7 @@ and contains something along the lines of:
 
 ```ini
 [bedwetter]
-darksky_api_key = <Your Dark Sky API key
+darksky_api_key = <Your Dark Sky API key>
 latitude = <The latitude of your garden>
 longitude = <The longitude of your garden>
 notify_on_failure = true
