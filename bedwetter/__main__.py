@@ -136,9 +136,9 @@ def water_off():
 def main():
     """ Main """
     config_load()
+    forecast = fetch_forecast()["daily"]["data"][0]
     water = False
 
-    forecast = fetch_forecast()["daily"]["data"][0]
     if (
         "precipType" in forecast
         and (forecast["precipProbability"] * 100)
@@ -159,7 +159,7 @@ def main():
         )
         water = True
 
-    if water:
+    if bool(os.getenv("FORCE_WATERING")) or water:
         # Water, notify, and exit.
         if not water_on():
             pushover(

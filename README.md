@@ -10,6 +10,8 @@ When run out of crontab, it will determine if it should water the gardens and ac
 the relay on the Automation Phat board, which runs a 24v submersible pump in the rain barrel.
 The rain barrel's spigot is hooked up to soaker hoses in the beds.
 
+If you want to override the watering logic and force a watering, you can run bedwetter with `FORCE_WATERING=true`
+
 ## Configuration
 
 The Automation pHAT requires that I2C be enabled on the Raspberry Pi, which can be done in `raspi-config`
