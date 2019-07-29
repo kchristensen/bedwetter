@@ -62,7 +62,10 @@ def config_update():
         with open(config_file, "w") as cfg_handle:
             CFG.write(cfg_handle)
     except EnvironmentError:
-        sys.exit("Error: Could not write to configuration file {}".format(config_file))
+        notify_and_exit(
+            f"Error: Could not write to configuration file {config_file}",
+            CFG["bedwetter"].getboolean("notify_on_failure"),
+        )
 
 
 def fetch_forecast():
@@ -78,15 +81,18 @@ def fetch_forecast():
         request.encoding = "utf-8"
         return request.json()
     except requests.exceptions.Timeout:
-        sys.exit(
-            "Error: Dark Sky API timed out after "
-            f'{CFG["bedwetter"]["timeout"]} seconds'
+        notify_and_exit(
+            f'Error: Dark Sky API timed out after {CFG["bedwetter"]["timeout"]} seconds',
+            CFG["bedwetter"].getboolean("notify_on_failure"),
         )
     except requests.exceptions.RequestException:
-        sys.exit("Error: There was an error connecting to the Dark Sky API")
+        notify_and_exit(
+            "Error: There was an error connecting to the Dark Sky API",
+            CFG["bedwetter"].getboolean("notify_on_failure"),
+        )
 
 
-def pushover(message, notify):
+def notify_and_exit(message, notify):
     """ Send a push notification and exit """
     try:
         if notify:
@@ -162,22 +168,22 @@ def main():
     if bool(os.getenv("FORCE_WATERING")) or water:
         # Water, notify, and exit.
         if not water_on():
-            pushover(
+            notify_and_exit(
                 "Watering failed to start.",
                 CFG["bedwetter"].getboolean("notify_on_failure"),
             )
 
         if not water_off():
-            pushover(
+            notify_and_exit(
                 "Watering failed to stop!",
                 CFG["bedwetter"].getboolean("notify_on_failure"),
             )
 
-        pushover(
+        notify_and_exit(
             "Watering was successful.", CFG["bedwetter"].getboolean("notify_on_success")
         )
     else:
-        pushover(
+        notify_and_exit(
             "Not watering today.", CFG["bedwetter"].getboolean("notify_on_inaction")
         )
 

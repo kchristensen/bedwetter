@@ -33,7 +33,7 @@ pushover_user = <Your Pushover API user key>
 threshold_days = 2
 threshold_percent = 50
 timeout = 5
-water_duration = 300
+water_duration = 3600
 ```
 
 It should be noted that this project is a bit rough around the edges as I didn't really
