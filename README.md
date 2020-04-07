@@ -25,6 +25,12 @@ and contains something along the lines of:
 darksky_api_key = <Your Dark Sky API key>
 latitude = <The latitude of your garden>
 longitude = <The longitude of your garden>
+mqtt_hostname = <Hostname of your mqtt server>
+mqtt_password = <Your mqtt broker password>
+mqtt_port = 8883
+mqtt_topic = bedwetter
+mqtt_username = <Your mqtt broker username>
+notify_method = <mqtt|pushover>
 notify_on_failure = true
 notify_on_inaction = true
 notify_on_success = true

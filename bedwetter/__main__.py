@@ -32,6 +32,7 @@ from configparser import ConfigParser
 from time import sleep, time
 
 # Third Party Imports
+import paho.mqtt.publish as mqtt_publish
 import requests
 
 try:
@@ -63,8 +64,9 @@ def config_update():
             CFG.write(cfg_handle)
     except EnvironmentError:
         notify_and_exit(
-            f"Error: Could not write to configuration file {config_file}",
-            CFG["bedwetter"].getboolean("notify_on_failure"),
+            event_name="wateringFailure",
+            message=f"Error: Could not write to configuration file {config_file}",
+            send_notification=CFG["bedwetter"].getboolean("notify_on_failure"),
         )
 
 
@@ -82,29 +84,53 @@ def fetch_forecast():
         return request.json()
     except requests.exceptions.Timeout:
         notify_and_exit(
-            f'Error: Dark Sky API timed out after {CFG["bedwetter"]["timeout"]} seconds',
-            CFG["bedwetter"].getboolean("notify_on_failure"),
+            event_name="wateringFailure",
+            message=f'Error: Dark Sky API timed out after {CFG["bedwetter"]["timeout"]} seconds',
+            send_notification=CFG["bedwetter"].getboolean("notify_on_failure"),
         )
     except requests.exceptions.RequestException:
         notify_and_exit(
-            "Error: There was an error connecting to the Dark Sky API",
-            CFG["bedwetter"].getboolean("notify_on_failure"),
+            event_name="wateringFailure",
+            message="Error: There was an error connecting to the Dark Sky API",
+            send_notification=CFG["bedwetter"].getboolean("notify_on_failure"),
         )
 
 
-def notify_and_exit(message, notify):
+def notify_and_exit(event_name, message, send_notification):
     """ Send a push notification and exit """
     try:
-        if notify:
-            requests.post(
-                "https://api.pushover.net/1/messages.json",
-                data={
-                    "token": CFG["bedwetter"]["pushover_token"],
-                    "user": CFG["bedwetter"]["pushover_user"],
-                    "message": message,
-                },
-                timeout=int(CFG["bedwetter"]["timeout"]),
-            )
+        if send_notification:
+            if CFG["bedwetter"]["notify_method"] == "mqtt":
+                mqtt_topic = f'{CFG["bedwetter"]["mqtt_topic"]}/event/{event_name}'
+                print(f"Sending mqtt message to {mqtt_topic}")
+                try:
+                    mqtt_publish.single(
+                        mqtt_topic,
+                        auth={
+                            "username": CFG["bedwetter"]["mqtt_username"],
+                            "password": CFG["bedwetter"]["mqtt_password"],
+                        },
+                        hostname=CFG["bedwetter"]["mqtt_server"],
+                        payload=message,
+                        port=CFG["bedwetter"].getint("mqtt_port"),
+                        tls={
+                            "ca_certs": f"{os.path.dirname(__file__)}/ssl/letsencrypt-root.pem"
+                        }
+                        if CFG["bedwetter"].getint("mqtt_port") == 8883
+                        else None,
+                    )
+                except:
+                    sys.exit("Error: Unable to send MQTT message.")
+            elif CFG["bedwetter"]["notify_method"] == "pushover":
+                requests.post(
+                    "https://api.pushover.net/1/messages.json",
+                    data={
+                        "token": CFG["bedwetter"]["pushover_token"],
+                        "user": CFG["bedwetter"]["pushover_user"],
+                        "message": message,
+                    },
+                    timeout=int(CFG["bedwetter"]["timeout"]),
+                )
         sys.exit(message)
     except requests.exceptions.Timeout:
         sys.exit(f'Error: Pushover API timed out after {CFG["bedwetter"]["timeout"]}')
@@ -114,7 +140,7 @@ def notify_and_exit(message, notify):
 
 def water_on():
     """ Start watering """
-    print("Watering for {} seconds.".format(CFG["bedwetter"]["water_duration"]))
+    print(f'Watering for {CFG["bedwetter"]["water_duration"]} seconds.')
     try:
         automationhat.relay.one.on()
         if automationhat.relay.one.is_on():
@@ -169,22 +195,28 @@ def main():
         # Water, notify, and exit.
         if not water_on():
             notify_and_exit(
-                "Watering failed to start.",
-                CFG["bedwetter"].getboolean("notify_on_failure"),
+                event_name="wateringFailure",
+                message="Watering failed to start.",
+                send_notification=CFG["bedwetter"].getboolean("notify_on_failure"),
             )
 
         if not water_off():
             notify_and_exit(
-                "Watering failed to stop!",
-                CFG["bedwetter"].getboolean("notify_on_failure"),
+                event_name="wateringRunaway",
+                message="Watering failed to stop!",
+                send_notification=CFG["bedwetter"].getboolean("notify_on_failure"),
             )
 
         notify_and_exit(
-            "Watering was successful.", CFG["bedwetter"].getboolean("notify_on_success")
+            event_name="wateringSuccess",
+            message="Watering was successful.",
+            send_notification=CFG["bedwetter"].getboolean("notify_on_success"),
         )
     else:
         notify_and_exit(
-            "Not watering today.", CFG["bedwetter"].getboolean("notify_on_inaction")
+            event_name="wateringSkipped",
+            message="Not watering today.",
+            send_notification=CFG["bedwetter"].getboolean("notify_on_inaction"),
         )
 
 
