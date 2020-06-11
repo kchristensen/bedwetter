@@ -3,14 +3,14 @@
 
 ## About
 
-I wrote this code to automate watering of my raised beds from a rain barrel using
+I wrote this code to automate watering of my raised beds from a rain barrel using a
 Raspberry Pi Zero W, and a [Pimoroni Automation pHAT](https://shop.pimoroni.com/products/automation-phat).
 
-When run out of crontab, it will determine if it should water the gardens and activate
-the relay on the Automation Phat board, which runs a 24v submersible pump in the rain barrel.
-The rain barrel's spigot is hooked up to soaker hoses in the beds.
+When run via systemd, it will daemonize and listen to an MQTT topic for events. Additionally, a cron-like
+schedule can be set to trigger automatic watering.
 
-If you want to override the watering logic and force a watering, you can run bedwetter with `FORCE_WATERING=true`
+When it determines it should water the gardens, it activates the relay on the Automation Phat board,
+which triggers a relay attached to the rain barrel that runs an RV water pump.
 
 ## Configuration
 
@@ -22,25 +22,37 @@ and contains something along the lines of:
 
 ```ini
 [bedwetter]
+cron_schedule = 0 8 * * *
 darksky_api_key = <Your Dark Sky API key>
 latitude = <The latitude of your garden>
+log_file = /var/log/bedwetter.log
+log_to_file = true
 longitude = <The longitude of your garden>
 mqtt_hostname = <Hostname of your mqtt server>
 mqtt_password = <Your mqtt broker password>
 mqtt_port = 8883
 mqtt_topic = bedwetter
 mqtt_username = <Your mqtt broker username>
-notify_method = <mqtt|pushover>
 notify_on_failure = true
 notify_on_inaction = true
 notify_on_success = true
-pushover_token = <Your Pushover API secret>
-pushover_user = <Your Pushover API user key>
 threshold_days = 2
 threshold_percent = 50
 timeout = 5
-water_duration = 3600
+water_duration = 600
+weather_api = <darksky|weatherflow>
+weatherflow_api_key = <Your WeatherFlow API key>
+weatherflow_station_id = <Your WeatherFlow Station ID>
 ```
 
 It should be noted that this project is a bit rough around the edges as I didn't really
 intend to distribute it, but I thought people might be interested in it.
+
+## Installation
+
+Bedwetter makes use of pip and virtualenv, so install those via your system's package manager first. Then it's just a matter of running `make install` in the root of this project.
+
+## TODO
+
+* Switch to WeatherFlow forecast API when it becomes available and remove Dark Sky support
+* Add ability to skip the next watering based on an MQTT message (wateringSkip)

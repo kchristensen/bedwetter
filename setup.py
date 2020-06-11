@@ -11,6 +11,7 @@ setup(
     include_package_data=True,
     install_requires=[
         'automationhat ; platform_system=="Linux"',
+        "crontab",
         "configparser",
         "paho-mqtt",
         "requests",
@@ -19,5 +20,5 @@ setup(
     name="bedwetter",
     packages=["bedwetter"],
     package_data={"": ["ssl/letsencrypt-root.pem"]},
-    version="1.5.0",
+    version="2.0.0",
 )

@@ -23,25 +23,89 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-# Standard Library Imports
+import logging
 import os
+import signal
 import sys
-
-# First Party Imports
+import threading
 from configparser import ConfigParser
 from time import sleep, time
 
-# Third Party Imports
-import paho.mqtt.publish as mqtt_publish
+import paho.mqtt.client as mqtt_client
 import requests
+from crontab import CronTab
 
-try:
-    import automationhat
-except ImportError:
-    print("Unable to import automationhat, continuing in development mode.")
 
-# Global ConfigParser object for configuration options
-CFG = ConfigParser()
+def cron_check(cron_kill):
+    """ Poll until it is time to trigger a watering """
+    logger.info(
+        "Started thread to water on schedule (%s)", CFG["bedwetter"]["cron_schedule"]
+    )
+    cron = CronTab(f'{CFG["bedwetter"]["cron_schedule"]}')
+    while True:
+        if cron_kill():
+            logger.info("Received kill signal, killing cron check thread")
+            break
+        time_until_cron = cron.next(default_utc=False)
+        if time_until_cron < 30:
+            # Sleep until it's closer to cron time to avoid a possible race
+            sleep(time_until_cron)
+            check_if_watering()
+        else:
+            # The higher this value is, the longer it takes to kill this thread
+            sleep(10)
+
+
+def check_if_watering():
+    """ Check if we should water today, and if so water """
+    logger.info("Checking if we're going to water today.")
+    water = False
+    if (int(time()) - int(CFG["bedwetter"]["last_water"])) > (
+        86400 * int(CFG["bedwetter"]["threshold_days"])
+    ):
+        logger.info(
+            "It has been more than %s days since last watering, time to water.",
+            CFG["bedwetter"]["threshold_days"],
+        )
+        water = True
+    else:
+        if CFG["bedwetter"]["weather_api"] == "darksky":
+            forecast = fetch_darksky_forecast()["daily"]["data"][0]
+            if (
+                "precipType" in forecast
+                and (forecast["precipProbability"] * 100)
+                < int(CFG["bedwetter"]["threshold_percent"])
+                and forecast["precipType"] == "rain"
+            ):
+                logger.info(
+                    "%s%% chance of %s in the next day, time to water.",
+                    f'{forecast["precipProbability"] * 100:.0f}',
+                    forecast["precipType"],
+                )
+                water = True
+        elif CFG["bedwetter"]["weather_api"] == "weatherflow":
+            forecast = fetch_weatherflow_conditions()
+            # TODO: WeatherFlow Forecast API is forthcoming
+            # For now, there's forecasting, so just check if there's < 5mm of
+            # precipitation recently
+            if (
+                int(forecast["obs"][0]["precip_accum_local_yesterday"])
+                + int(forecast["obs"][0]["precip_accum_local_day"])
+                < 5
+            ):
+                logger.info("Less than 5mm of rain in the past day, time to water.")
+                water = True
+
+    if water:
+        log_and_publish(
+            "wateringStart", int(CFG["bedwetter"]["watering_duration"]), True,
+        )
+    else:
+        log_and_publish(
+            "wateringSkipped",
+            "Not watering today.",
+            CFG["bedwetter"].getboolean("notify_on_inaction"),
+        )
 
 
 def config_get_path():
@@ -51,7 +115,9 @@ def config_get_path():
 
 def config_load():
     """ Load configuration options from file """
+    global CFG
     config_file = config_get_path()
+    CFG = ConfigParser()
     CFG.read(config_file)
 
 
@@ -63,14 +129,14 @@ def config_update():
         with open(config_file, "w") as cfg_handle:
             CFG.write(cfg_handle)
     except EnvironmentError:
-        notify_and_exit(
-            event_name="wateringFailure",
-            message=f"Error: Could not write to configuration file {config_file}",
-            send_notification=CFG["bedwetter"].getboolean("notify_on_failure"),
+        log_and_publish(
+            "wateringFailure",
+            "Could not write to configuration file {config_file}",
+            CFG["bedwetter"].getboolean("notify_on_failure"),
         )
 
 
-def fetch_forecast():
+def fetch_darksky_forecast():
     """ Fetch forecast information for the next day from Dark Sky """
     try:
         darksky_url = (
@@ -83,145 +149,225 @@ def fetch_forecast():
         request.encoding = "utf-8"
         return request.json()
     except requests.exceptions.Timeout:
-        notify_and_exit(
-            event_name="wateringFailure",
-            message=f'Error: Dark Sky API timed out after {CFG["bedwetter"]["timeout"]} seconds',
-            send_notification=CFG["bedwetter"].getboolean("notify_on_failure"),
+        log_and_publish(
+            "wateringFailure",
+            f'Error: Dark Sky API timed out after {CFG["bedwetter"]["timeout"]} seconds',
+            CFG["bedwetter"].getboolean("notify_on_failure"),
         )
     except requests.exceptions.RequestException:
-        notify_and_exit(
-            event_name="wateringFailure",
-            message="Error: There was an error connecting to the Dark Sky API",
-            send_notification=CFG["bedwetter"].getboolean("notify_on_failure"),
+        log_and_publish(
+            "wateringFailure",
+            "Error: There was an error connecting to the Dark Sky API",
+            CFG["bedwetter"].getboolean("notify_on_failure"),
         )
 
 
-def notify_and_exit(event_name, message, send_notification):
-    """ Send a push notification and exit """
+def fetch_weatherflow_conditions():
+    """ Fetch current weather information for a specified station from WeatherFlow """
     try:
-        if send_notification:
-            if CFG["bedwetter"]["notify_method"] == "mqtt":
-                mqtt_topic = f'{CFG["bedwetter"]["mqtt_topic"]}/event/{event_name}'
-                print(f"Sending mqtt message to {mqtt_topic}")
-                try:
-                    mqtt_publish.single(
-                        mqtt_topic,
-                        auth={
-                            "username": CFG["bedwetter"]["mqtt_username"],
-                            "password": CFG["bedwetter"]["mqtt_password"],
-                        },
-                        hostname=CFG["bedwetter"]["mqtt_server"],
-                        payload=message,
-                        port=CFG["bedwetter"].getint("mqtt_port"),
-                        tls={
-                            "ca_certs": f"{os.path.dirname(__file__)}/ssl/letsencrypt-root.pem"
-                        }
-                        if CFG["bedwetter"].getint("mqtt_port") == 8883
-                        else None,
-                    )
-                except:
-                    sys.exit("Error: Unable to send MQTT message.")
-            elif CFG["bedwetter"]["notify_method"] == "pushover":
-                requests.post(
-                    "https://api.pushover.net/1/messages.json",
-                    data={
-                        "token": CFG["bedwetter"]["pushover_token"],
-                        "user": CFG["bedwetter"]["pushover_user"],
-                        "message": message,
-                    },
-                    timeout=int(CFG["bedwetter"]["timeout"]),
-                )
-        sys.exit(message)
+        weatherflow_url = (
+            "https://swd.weatherflow.com/swd/rest/observations/station/"
+            f'{CFG["bedwetter"]["weatherflow_station_id"]}'
+            f'?api_key={CFG["bedwetter"]["weatherflow_api_key"]}'
+        )
+        request = requests.get(
+            weatherflow_url, timeout=int(CFG["bedwetter"]["timeout"])
+        )
+        request.encoding = "utf-8"
+        return request.json()
     except requests.exceptions.Timeout:
-        sys.exit(f'Error: Pushover API timed out after {CFG["bedwetter"]["timeout"]}')
+        log_and_publish(
+            "wateringFailure",
+            f'Error: WeatherFlow API timed out after {CFG["bedwetter"]["timeout"]} seconds',
+            CFG["bedwetter"].getboolean("notify_on_failure"),
+        )
     except requests.exceptions.RequestException:
-        sys.exit("Error: There was an error connecting to the Pushover API")
+        log_and_publish(
+            "wateringFailure",
+            "Error: There was an error connecting to the WeatherFlow API",
+            CFG["bedwetter"].getboolean("notify_on_failure"),
+        )
 
 
-def water_on():
+def log_and_publish(topic, payload, publish):
+    """ Log a message to the logger, and optionally publish to mqtt """
+    logger.info(payload)
+    if publish:
+        (rc, _) = client.publish(
+            f'{CFG["bedwetter"]["mqtt_topic"]}/event/{topic}',
+            payload=payload,
+            qos=1,
+            retain=False,
+        )
+        if rc != 0:
+            logger.error("Unable to publish mqtt message, rc is %s", rc)
+
+
+def on_connect(client, userdata, flags, rc):
+    """ Connect to mqtt broker and subscribe to the bedwetter topic """
+    logger.info("Connected to the mqtt broker")
+    client.subscribe(f'{CFG["bedwetter"]["mqtt_topic"]}/#')
+    if "cron_schedule" in CFG["bedwetter"] and CFG["bedwetter"]["cron_schedule"]:
+        global cron_kill
+        global cron_thread
+        cron_kill = False
+        cron_thread = threading.Thread(target=cron_check, args=(lambda: cron_kill,))
+        cron_thread.daemon = True
+        cron_thread.start()
+        if not cron_thread.is_alive():
+            logger.error("Unable to start cron check process")
+    else:
+        logger.info("Not starting cron check thread, cron time string is not set")
+
+
+def on_disconnect(client, userdata, rc):
+    """ Log when disconnected from the mqtt broker """
+    logger.info("Disconnected from the mqtt broker")
+    # Kill cron_thread if it is running, otherwise we'll end up with
+    # a new one on every reconnection to the mqtt broker
+    if cron_thread.is_alive():
+        logger.info("Trying to kill cron check, this can take a few seconds")
+        global cron_kill
+        cron_kill = True
+        cron_thread.join()
+
+
+def on_message(client, userdata, msg):
+    """ On receipt of a message, do stuff """
+    if "wateringStart" in msg.topic:
+        logger.info("Received wateringStart mqtt message")
+        if not msg.payload:
+            duration = int(CFG["bedwetter"]["watering_duration"])
+        else:
+            duration = int(msg.payload)
+        if not water_on(duration):
+            log_and_publish(
+                "wateringFailure",
+                "Watering failed to start.",
+                CFG["bedwetter"].getboolean("notify_on_failure"),
+            )
+        else:
+            log_and_publish(
+                "wateringSuccess",
+                "Watering was successful.",
+                CFG["bedwetter"].getboolean("notify_on_success"),
+            )
+    elif "wateringStop" in msg.topic:
+        logger.info("Received wateringStop mqtt message")
+        if not water_off():
+            log_and_publish(
+                "wateringRunaway",
+                "Watering failed to stop!",
+                CFG["bedwetter"].getboolean("notify_on_failure"),
+            )
+
+
+def setup_logger():
+    """ Setup logging to file and stdout """
+    # Setup date formatting
+    formatter = logging.Formatter(
+        "%(asctime)-15s %(levelname)s - %(message)s", datefmt="%b %d %H:%M:%S"
+    )
+
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+
+    # Log to stdout
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    # Optionally log to file
+    if "log_file" in CFG["bedwetter"] and CFG["bedwetter"].getboolean("log_to_file"):
+        file_handler = logging.FileHandler(
+            os.path.expanduser(CFG["bedwetter"]["log_file"])
+        )
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+
+    return logger
+
+
+def shutdown(_signo, _stack_frame):
+    logger.info("Caught SIGTERM, shutting down")
+    sys.exit(0)
+
+
+def water_on(duration):
     """ Start watering """
-    print(f'Watering for {CFG["bedwetter"]["water_duration"]} seconds.')
+    logger.info("Watering for %s seconds", duration)
     try:
         automationhat.relay.one.on()
         if automationhat.relay.one.is_on():
-            sleep(int(CFG["bedwetter"]["water_duration"]))
+            sleep(duration)
             CFG["bedwetter"]["last_water"] = f"{time():.0f}"
             config_update()
             return True
     except NameError as name_e:
-        print(name_e)
+        logger.info(name_e)
     return False
 
 
 def water_off():
     """ Stop watering """
-    print("Turning water off.")
+    logger.info("Turning water off")
     try:
         automationhat.relay.one.off()
         if automationhat.relay.one.is_off():
             return True
     except NameError as name_e:
-        print(name_e)
+        logger.info(name_e)
     return False
 
 
 def main():
     """ Main """
+    # Load config file settings
     config_load()
-    forecast = fetch_forecast()["daily"]["data"][0]
-    water = False
 
-    if (
-        "precipType" in forecast
-        and (forecast["precipProbability"] * 100)
-        < int(CFG["bedwetter"]["threshold_percent"])
-        and forecast["precipType"] == "rain"
-    ):
-        print(
-            f'{forecast["precipProbability"] * 100:.0f}% chance of '
-            f'{forecast["precipType"]} in the next day, time to water.'
-        )
-        water = True
-    elif (int(time()) - int(CFG["bedwetter"]["last_water"])) > (
-        86400 * int(CFG["bedwetter"]["threshold_days"])
-    ):
-        print(
-            f'It has been more than {CFG["bedwetter"]["threshold_days"]} '
-            "days since last watering, time to water."
-        )
-        water = True
+    # Setup logger
+    global logger
+    logger = setup_logger()
 
-    if bool(os.getenv("FORCE_WATERING")) or water:
-        # Water, notify, and exit.
-        if not water_on():
-            notify_and_exit(
-                event_name="wateringFailure",
-                message="Watering failed to start.",
-                send_notification=CFG["bedwetter"].getboolean("notify_on_failure"),
-            )
+    # Try importing automationhat if it exists
+    try:
+        import automationhat
+    except ImportError:
+        logger.warning("Unable to import automationhat, continuing in development mode")
 
-        if not water_off():
-            notify_and_exit(
-                event_name="wateringRunaway",
-                message="Watering failed to stop!",
-                send_notification=CFG["bedwetter"].getboolean("notify_on_failure"),
-            )
+    # Catch SIGTERM when being run via Systemd
+    signal.signal(signal.SIGTERM, shutdown)
 
-        notify_and_exit(
-            event_name="wateringSuccess",
-            message="Watering was successful.",
-            send_notification=CFG["bedwetter"].getboolean("notify_on_success"),
+    global client
+    client = mqtt_client.Client()
+    client.on_connect = on_connect
+    client.on_disconnect = on_disconnect
+    client.on_message = on_message
+    client.tls_set(ca_certs=f"{os.path.dirname(__file__)}/ssl/letsencrypt-root.pem")
+    client.username_pw_set(
+        CFG["bedwetter"]["mqtt_username"], CFG["bedwetter"]["mqtt_password"],
+    )
+
+    try:
+        client.connect(
+            CFG["bedwetter"]["mqtt_server"],
+            port=CFG["bedwetter"].getint("mqtt_port"),
+            keepalive=60,
         )
-    else:
-        notify_and_exit(
-            event_name="wateringSkipped",
-            message="Not watering today.",
-            send_notification=CFG["bedwetter"].getboolean("notify_on_inaction"),
-        )
+    # Paho swallows exceptions so I doubt this even works
+    except Exception as paho_e:
+        logger.info("Unable to connect to mqtt broker, %s", paho_e)
+
+    try:
+        client.loop_forever()
+    except KeyboardInterrupt:
+        logger.info("KeyboardInterrupt received, shutting down")
+        client.disconnect()
+        sys.exit(0)
 
 
 if sys.version_info >= (3, 7):
     if __name__ == "__main__":
         main()
 else:
-    sys.exit("Error: This script requires Python 3.7 or greater")
+    sys.exit("Fatal Error: This script requires Python 3.7 or greater")
