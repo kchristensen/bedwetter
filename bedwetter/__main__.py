@@ -289,7 +289,7 @@ def setup_logger():
 
 
 def shutdown(_signo, _stack_frame):
-    logger.info("Caught SIGTERM, shutting down")
+    log_and_publish("shuttingDown", "Caught SIGTERM, shutting down", True)
     sys.exit(0)
 
 
