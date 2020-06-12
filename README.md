@@ -35,6 +35,7 @@ mqtt_topic = bedwetter
 mqtt_username = <Your mqtt broker username>
 notify_on_failure = true
 notify_on_inaction = true
+notify_on_service = true
 notify_on_success = true
 threshold_days = 2
 threshold_percent = 50
@@ -56,3 +57,4 @@ Bedwetter makes use of pip and virtualenv, so install those via your system's pa
 
 * Switch to WeatherFlow forecast API when it becomes available and remove Dark Sky support
 * Add ability to skip the next watering based on an MQTT message (wateringSkip)
+* Add ability to stop the current watering based on an MQTT message (wateringStop)
