@@ -76,12 +76,10 @@ def check_if_watering():
                 logger.info("Less than 5mm of rain in the past day, time to water")
                 water = True
     if water:
-        # TODO: Network calls in this thread are blocking
         mqtt_publish(
             "wateringStart", CFG["bedwetter"].getint("watering_duration"),
         )
     else:
-        # TODO: Network calls in this thread are blocking
         log_and_publish(
             "wateringSkipped",
             "Not watering today.",
@@ -135,21 +133,17 @@ def cron_check(cron_kill, cron_skip):
             # Sleep until it's closer to cron time to avoid a possible race
             sleep(time_until_cron)
             if not cron_skip():
-                lock = threading.Lock()
-                lock.acquire()
+                # TODO: Network calls in this thread are blocking
                 check_if_watering()
-                lock.release()
             else:
                 set_cron_skip(False)
                 try:
-                    lock = threading.Lock()
-                    lock.acquire()
+                    # TODO: Network calls in this thread are blocking
                     log_and_publish(
                         "wateringSkipped",
                         "Watering skipped",
                         CFG["bedwetter"].getboolean("notify_on_inaction"),
                     )
-                    lock.release()
                 except Exception as e:
                     logger.info(e)
         else:
