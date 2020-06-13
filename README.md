@@ -23,7 +23,6 @@ and contains something along the lines of:
 ```ini
 [bedwetter]
 cron_schedule = 0 8 * * *
-darksky_api_key = <Your Dark Sky API key>
 latitude = <The latitude of your garden>
 log_file = /var/log/bedwetter.log
 log_to_file = true
@@ -55,6 +54,5 @@ Bedwetter makes use of pip and virtualenv, so install those via your system's pa
 
 ## TODO
 
-* Switch to WeatherFlow forecast API when it becomes available and remove Dark Sky support
 * Add ability to skip the next watering based on an MQTT message (wateringSkip)
 * Add ability to stop the current watering based on an MQTT message (wateringStop)

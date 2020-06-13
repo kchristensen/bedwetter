@@ -29,7 +29,7 @@ import signal
 import sys
 import threading
 from configparser import ConfigParser
-from time import sleep, time
+from time import sleep, strftime, time
 
 import paho.mqtt.client as mqtt_client
 import requests
@@ -49,31 +49,15 @@ def check_if_watering():
         )
         water = True
     else:
-        if CFG["bedwetter"]["weather_api"] == "darksky":
-            forecast = fetch_darksky_forecast()["daily"]["data"][0]
-            if (
-                "precipType" in forecast
-                and (forecast["precipProbability"] * 100)
-                < int(CFG["bedwetter"]["threshold_percent"])
-                and forecast["precipType"] == "rain"
-            ):
+        forecast = fetch_weatherflow_forecast()["forecast"]["daily"]
+        for day in forecast:
+            if day["day_num"] == int(strftime("%d")) and day[
+                "precip_probability"
+            ] < CFG["bedwetter"].getint("threshold_percent"):
                 logger.info(
-                    "%s%% chance of %s in the next day, time to water",
-                    f'{forecast["precipProbability"] * 100:.0f}',
-                    forecast["precipType"],
+                    "%s%% chance of precipitation in the next day, time to water",
+                    f'{day["precip_probability"]:.0f}',
                 )
-                water = True
-        elif CFG["bedwetter"]["weather_api"] == "weatherflow":
-            forecast = fetch_weatherflow_conditions()
-            # TODO: WeatherFlow Forecast API is forthcoming
-            # For now, there's forecasting, so just check if there's < 5mm of
-            # precipitation recently
-            if (
-                int(forecast["obs"][0]["precip_accum_local_yesterday"])
-                + int(forecast["obs"][0]["precip_accum_local_day"])
-                < 5
-            ):
-                logger.info("Less than 5mm of rain in the past day, time to water")
                 water = True
     if water:
         mqtt_publish(
@@ -151,39 +135,13 @@ def cron_check(cron_kill, cron_skip):
             sleep(sleep_interval)
 
 
-def fetch_darksky_forecast():
-    """ Fetch forecast information for the next day from Dark Sky """
-    try:
-        darksky_url = (
-            "https://api.darksky.net/forecast/"
-            f'{CFG["bedwetter"]["darksky_api_key"]}/'
-            f'{CFG["bedwetter"]["latitude"]},'
-            f'{CFG["bedwetter"]["longitude"]}'
-        )
-        request = requests.get(darksky_url, timeout=int(CFG["bedwetter"]["timeout"]))
-        request.encoding = "utf-8"
-        return request.json()
-    except requests.exceptions.Timeout:
-        log_and_publish(
-            "wateringFailure",
-            f'Error: Dark Sky API timed out after {CFG["bedwetter"]["timeout"]} seconds',
-            CFG["bedwetter"].getboolean("notify_on_failure"),
-        )
-    except requests.exceptions.RequestException:
-        log_and_publish(
-            "wateringFailure",
-            "Error: There was an error connecting to the Dark Sky API",
-            CFG["bedwetter"].getboolean("notify_on_failure"),
-        )
-
-
-def fetch_weatherflow_conditions():
-    """ Fetch current weather information for a specified station from WeatherFlow """
+def fetch_weatherflow_forecast():
+    """ Fetch a weather forecast from WeatherFlow """
     try:
         weatherflow_url = (
-            "https://swd.weatherflow.com/swd/rest/observations/station/"
-            f'{CFG["bedwetter"]["weatherflow_station_id"]}'
+            "https://swd.weatherflow.com/swd/rest/better_forecast/"
             f'?api_key={CFG["bedwetter"]["weatherflow_api_key"]}'
+            f'&lat={CFG["bedwetter"]["latitude"]}&lon={CFG["bedwetter"]["longitude"]}'
         )
         request = requests.get(
             weatherflow_url, timeout=int(CFG["bedwetter"]["timeout"])
