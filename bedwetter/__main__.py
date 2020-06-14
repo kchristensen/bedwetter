@@ -265,7 +265,7 @@ def on_message(client, userdata, msg):
             set_cron_skip(True)
     elif "wateringStop" in msg.topic:
         # This won't actually interrupt watering but could come in handy if
-        # the relay is stock on.
+        # the relay is stuck on.
         LOGGER.info("Received wateringStop mqtt message")
         if not water_off():
             log_and_publish(
