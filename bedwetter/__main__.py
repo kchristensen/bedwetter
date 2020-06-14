@@ -35,38 +35,46 @@ import paho.mqtt.client as mqtt_client
 import requests
 from crontab import CronTab
 
+# Setup some global variables because I'm lazy
+CFG = None
+CRON_KILL = None
+CRON_SKIP = None
+CRON_THREAD = None
+LOGGER = None
 
-def check_if_watering():
+
+def check_if_watering(client):
     """ Check if we should water today, and if so water """
-    logger.info("Checking if we're going to water today.")
+    LOGGER.info("Checking if we're going to water today.")
     water = False
     if (int(time()) - int(CFG["bedwetter"]["last_water"])) > (
         86400 * int(CFG["bedwetter"]["threshold_days"])
     ):
-        logger.info(
+        LOGGER.info(
             "More than %s days since last watering, time to water",
             CFG["bedwetter"]["threshold_days"],
         )
         water = True
     else:
-        forecast = fetch_weatherflow_forecast()["forecast"]["daily"]
+        forecast = fetch_forecast(client)["forecast"]["daily"]
         for day in forecast:
             if day["day_num"] == int(strftime("%d")) and day[
                 "precip_probability"
             ] < CFG["bedwetter"].getint("threshold_percent"):
-                logger.info(
+                LOGGER.info(
                     "%s%% chance of precipitation in the next day, time to water",
                     f'{day["precip_probability"]:.0f}',
                 )
                 water = True
     if water:
-        mqtt_publish(
-            "wateringStart", CFG["bedwetter"].getint("watering_duration"),
+        publish(
+            client, "wateringStart", CFG["bedwetter"].getint("water_duration"),
         )
     else:
         log_and_publish(
+            client,
             "wateringSkipped",
-            "Not watering today.",
+            "Not watering today",
             CFG["bedwetter"].getboolean("notify_on_inaction"),
         )
 
@@ -84,58 +92,76 @@ def config_load():
     CFG.read(config_file)
 
 
-def config_update():
+def config_update(client):
     """ Updates the config file with any changes that have been made """
     config_file = config_get_path()
-
     try:
         with open(config_file, "w") as cfg_handle:
             CFG.write(cfg_handle)
     except EnvironmentError:
         log_and_publish(
+            client,
             "wateringFailure",
             "Could not write to configuration file {config_file}",
             CFG["bedwetter"].getboolean("notify_on_failure"),
         )
 
 
-def cron_check(cron_kill, cron_skip):
+def create_paho_client():
+    """ Setup and create a Paho client """
+    # Paho is not thread safe, so we'll end up making a few clients
+    client = mqtt_client.Client()
+    client.tls_set(ca_certs=f"{os.path.dirname(__file__)}/ssl/letsencrypt-root.pem")
+    client.username_pw_set(
+        CFG["bedwetter"]["mqtt_username"], CFG["bedwetter"]["mqtt_password"],
+    )
+    return client
+
+
+def cron_check(kill, skip):
     """ Poll until it is time to trigger a watering """
-    logger.info(
+    LOGGER.info(
         "Started thread to water on schedule (%s)", CFG["bedwetter"]["cron_schedule"]
     )
+
+    cron_client = create_paho_client()
+    try:
+        cron_client.connect(
+            CFG["bedwetter"]["mqtt_server"],
+            port=CFG["bedwetter"].getint("mqtt_port"),
+            keepalive=60,
+        )
+    # Paho swallows exceptions so I doubt this even works
+    except Exception as paho_e:
+        LOGGER.info("Unable to connect to mqtt broker, %s", paho_e)
+
     cron = CronTab(f'{CFG["bedwetter"]["cron_schedule"]}')
     # The higher this value is, the longer it takes to kill this thread
     sleep_interval = 10
     while True:
-        if cron_kill():
-            logger.info("Received kill signal, killing cron check thread")
+        if kill():
+            LOGGER.info("Received kill signal, killing cron check thread")
             break
         time_until_cron = cron.next(default_utc=False)
-        logger.info("Time until cron: %s", int(time_until_cron))
+        LOGGER.info("Time until cron: %s seconds", int(time_until_cron))
         if time_until_cron <= sleep_interval:
             # Sleep until it's closer to cron time to avoid a possible race
             sleep(time_until_cron)
-            if not cron_skip():
-                # TODO: Network calls in this thread are blocking
-                check_if_watering()
+            if not skip():
+                check_if_watering(cron_client)
             else:
                 set_cron_skip(False)
-                try:
-                    # TODO: Network calls in this thread are blocking
-                    log_and_publish(
-                        "wateringSkipped",
-                        "Watering skipped",
-                        CFG["bedwetter"].getboolean("notify_on_inaction"),
-                    )
-                except Exception as e:
-                    logger.info(e)
+                log_and_publish(
+                    cron_client,
+                    "wateringSkipped",
+                    "Watering skipped",
+                    CFG["bedwetter"].getboolean("notify_on_inaction"),
+                )
         else:
-            logger.info("Boop")
             sleep(sleep_interval)
 
 
-def fetch_weatherflow_forecast():
+def fetch_forecast(client):
     """ Fetch a weather forecast from WeatherFlow """
     try:
         weatherflow_url = (
@@ -148,28 +174,110 @@ def fetch_weatherflow_forecast():
         )
         request.encoding = "utf-8"
         return request.json()
-    except requests.exceptions.Timeout:
+    except requests.exceptions.ConnectTimeout:
         log_and_publish(
+            client,
             "wateringFailure",
             f'Error: WeatherFlow API timed out after {CFG["bedwetter"]["timeout"]} seconds',
             CFG["bedwetter"].getboolean("notify_on_failure"),
         )
     except requests.exceptions.RequestException:
         log_and_publish(
+            client,
             "wateringFailure",
             "Error: There was an error connecting to the WeatherFlow API",
             CFG["bedwetter"].getboolean("notify_on_failure"),
         )
 
 
-def log_and_publish(topic, payload, publish):
+def log_and_publish(client, topic, payload, publish):
     """ Log a message to the logger, and optionally publish to mqtt """
-    logger.info(payload)
+    LOGGER.info(payload)
     if publish:
-        mqtt_publish(topic, payload)
+        publish(client, topic, payload)
 
 
-def mqtt_publish(topic, payload):
+def on_connect(client, userdata, flags, rc):
+    """ Connect to mqtt broker and subscribe to the bedwetter topic """
+    LOGGER.info("Connected to the mqtt broker")
+    client.subscribe(f'{CFG["bedwetter"]["mqtt_topic"]}/#')
+    if "cron_schedule" in CFG["bedwetter"] and CFG["bedwetter"]["cron_schedule"]:
+        global CRON_KILL
+        global CRON_THREAD
+        CRON_KILL = False
+        set_cron_skip(False)
+        CRON_THREAD = threading.Thread(
+            target=cron_check, args=(lambda: CRON_KILL, lambda: CRON_SKIP,)
+        )
+        CRON_THREAD.daemon = True
+        CRON_THREAD.start()
+        if not CRON_THREAD.is_alive():
+            LOGGER.error("Unable to start cron check process")
+    else:
+        LOGGER.info("Not starting cron check thread, cron time string is not set")
+
+
+def on_disconnect(client, userdata, rc):
+    """ Log when disconnected from the mqtt broker """
+    LOGGER.info("Disconnected from the mqtt broker")
+    # Kill CRON_THREAD if it is running, otherwise we'll end up with
+    # a new one on every reconnection to the mqtt broker
+    try:
+        if CRON_THREAD.is_alive():
+            LOGGER.info("Trying to kill cron check, this can take a few seconds")
+            global CRON_KILL
+            CRON_KILL = True
+            CRON_THREAD.join()
+    except NameError:
+        pass
+
+
+def on_log(client, userdata, level, buf):
+    """ Log Paho debug information """
+    LOGGER.debug(buf)
+
+
+def on_message(client, userdata, msg):
+    """ On receipt of a message, do stuff """
+    if "wateringStart" in msg.topic:
+        LOGGER.info("Received wateringStart mqtt message")
+        if not msg.payload:
+            duration = CFG["bedwetter"].getint("watering_duration")
+        else:
+            duration = int(msg.payload)
+        if not water_on(client, duration):
+            log_and_publish(
+                client,
+                "wateringFailure",
+                "Watering failed",
+                CFG["bedwetter"].getboolean("notify_on_failure"),
+            )
+        else:
+            log_and_publish(
+                client,
+                "wateringSuccess",
+                "Watering succeeded",
+                CFG["bedwetter"].getboolean("notify_on_success"),
+            )
+    elif "wateringSkip" in msg.topic:
+        if CRON_THREAD.is_alive():
+            LOGGER.info("Skipping the next automatic watering")
+            set_cron_skip(True)
+    elif "wateringStop" in msg.topic:
+        # This won't actually interrupt watering but could come in handy if
+        # the relay is stock on.
+        LOGGER.info("Received wateringStop mqtt message")
+        if not water_off():
+            log_and_publish(
+                client,
+                "wateringRunaway",
+                "Watering failed to stop!",
+                CFG["bedwetter"].getboolean("notify_on_failure"),
+            )
+
+
+def publish(client, topic, payload):
+    """ Publish messages to mqtt """
     (rc, _) = client.publish(
         f'{CFG["bedwetter"]["mqtt_topic"]}/event/{topic}',
         payload=payload,
@@ -177,83 +285,17 @@ def mqtt_publish(topic, payload):
         retain=False,
     )
     if rc != 0:
-        logger.error("Unable to publish mqtt message, rc is %s", rc)
-
-
-def on_connect(client, userdata, flags, rc):
-    """ Connect to mqtt broker and subscribe to the bedwetter topic """
-    logger.info("Connected to the mqtt broker")
-    client.subscribe(f'{CFG["bedwetter"]["mqtt_topic"]}/#')
-    if "cron_schedule" in CFG["bedwetter"] and CFG["bedwetter"]["cron_schedule"]:
-        global cron_kill
-        global cron_thread
-        cron_kill = False
-        set_cron_skip(False)
-        cron_thread = threading.Thread(
-            target=cron_check, args=(lambda: cron_kill, lambda: cron_skip,)
-        )
-        cron_thread.daemon = True
-        cron_thread.start()
-        if not cron_thread.is_alive():
-            logger.error("Unable to start cron check process")
-    else:
-        logger.info("Not starting cron check thread, cron time string is not set")
-
-
-def on_disconnect(client, userdata, rc):
-    """ Log when disconnected from the mqtt broker """
-    logger.info("Disconnected from the mqtt broker")
-    # Kill cron_thread if it is running, otherwise we'll end up with
-    # a new one on every reconnection to the mqtt broker
-    if cron_thread.is_alive():
-        logger.info("Trying to kill cron check, this can take a few seconds")
-        global cron_kill
-        cron_kill = True
-        cron_thread.join()
-
-
-def on_message(client, userdata, msg):
-    """ On receipt of a message, do stuff """
-    if "wateringStart" in msg.topic:
-        logger.info("Received wateringStart mqtt message")
-        if not msg.payload:
-            duration = CFG["bedwetter"].getint("watering_duration")
-        else:
-            duration = int(msg.payload)
-        if not water_on(duration):
-            log_and_publish(
-                "wateringFailure",
-                "Watering failed",
-                CFG["bedwetter"].getboolean("notify_on_failure"),
-            )
-        else:
-            log_and_publish(
-                "wateringSuccess",
-                "Watering succeeded",
-                CFG["bedwetter"].getboolean("notify_on_success"),
-            )
-    elif "wateringSkip" in msg.topic:
-        if cron_thread.is_alive():
-            logger.info("Skipping the next automatic watering")
-            set_cron_skip(True)
-    # TODO: Making this work is going to involve spinning watering off into a thread
-    elif "wateringStop" in msg.topic:
-        logger.info("Received wateringStop mqtt message")
-        if not water_off():
-            log_and_publish(
-                "wateringRunaway",
-                "Watering failed to stop!",
-                CFG["bedwetter"].getboolean("notify_on_failure"),
-            )
+        LOGGER.error("Unable to publish mqtt message, return code is %s", rc)
 
 
 def set_cron_skip(value):
-    global cron_skip
-    logger.info("Setting cron skip value to %s", value)
-    cron_skip = value
+    """ Update CRON_SKIP variable globally and optionally update CRON_THREAD """
+    global CRON_SKIP
+    LOGGER.info("Setting cron skip value to %s", value)
+    CRON_SKIP = value
     if value:
         # If we're setting this to True, we're going to want to update the cron thread
-        cron_thread.join()
+        CRON_THREAD.join()
 
 
 def setup_logger():
@@ -278,36 +320,7 @@ def setup_logger():
         )
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
-
     return logger
-
-
-def shutdown(_signo, _stack_frame):
-    log_and_publish(
-        "shuttingDown",
-        "Caught SIGTERM, shutting down",
-        CFG["bedwetter"].getboolean("notify_on_service"),
-    )
-    sys.exit(0)
-
-
-def water_on(duration):
-    """ Start watering """
-    try:
-        import automationhat
-
-        logger.info("Watering for %s seconds", duration)
-        automationhat.relay.one.on()
-        if automationhat.relay.one.is_on():
-            sleep(duration)
-            CFG["bedwetter"]["last_water"] = f"{time():.0f}"
-            config_update()
-            return True
-    except ImportError:
-        logger.warning("Unable to import automationhat, continuing in debug mode")
-    except NameError as name_e:
-        logger.info(name_e)
-    return False
 
 
 def water_off():
@@ -315,19 +328,34 @@ def water_off():
     try:
         import automationhat
 
-        logger.info("Turning water off")
+        LOGGER.info("Turning water off")
         automationhat.relay.one.off()
         if automationhat.relay.one.is_off():
             return True
     except ImportError:
-        logger.warning("Unable to import automationhat, continuing in debug mode")
+        LOGGER.warning("Unable to import automationhat, continuing in debug mode")
     except NameError as name_e:
-        logger.info(name_e)
+        LOGGER.info(name_e)
     return False
 
 
-def on_log(client, userdata, level, buf):
-    logger.debug(buf)
+def water_on(client, duration):
+    """ Start watering """
+    try:
+        import automationhat
+
+        LOGGER.info("Watering for %s seconds", duration)
+        automationhat.relay.one.on()
+        if automationhat.relay.one.is_on():
+            sleep(duration)
+            CFG["bedwetter"]["last_water"] = f"{time():.0f}"
+            config_update(client)
+            return True
+    except ImportError:
+        LOGGER.warning("Unable to import automationhat, continuing in debug mode")
+    except NameError as name_e:
+        LOGGER.info(name_e)
+    return False
 
 
 def main():
@@ -335,24 +363,17 @@ def main():
     # Load config file settings
     config_load()
 
-    # Setup logger
-    global logger
-    logger = setup_logger()
+    # Setup logging
+    global LOGGER
+    LOGGER = setup_logger()
 
-    # Catch SIGTERM when being run via Systemd
-    signal.signal(signal.SIGTERM, shutdown)
-
-    global client
-    client = mqtt_client.Client()
+    # Create main thread mqtt client and setup callbacks
+    client = create_paho_client()
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
-    client.on_log = on_log
+    if CFG["bedwetter"].getboolean("debug"):
+        client.on_log = on_log
     client.on_message = on_message
-    client.tls_set(ca_certs=f"{os.path.dirname(__file__)}/ssl/letsencrypt-root.pem")
-    client.username_pw_set(
-        CFG["bedwetter"]["mqtt_username"], CFG["bedwetter"]["mqtt_password"],
-    )
-
     try:
         client.connect(
             CFG["bedwetter"]["mqtt_server"],
@@ -361,18 +382,31 @@ def main():
         )
     # Paho swallows exceptions so I doubt this even works
     except Exception as paho_e:
-        logger.info("Unable to connect to mqtt broker, %s", paho_e)
+        LOGGER.info("Unable to connect to mqtt broker, %s", paho_e)
 
     log_and_publish(
+        client,
         "startingUp",
         "Startup has completed",
         CFG["bedwetter"].getboolean("notify_on_service"),
     )
 
+    # Catch SIGTERM when being run via Systemd
+    def shutdown(*args):
+        log_and_publish(
+            client,
+            "shuttingDown",
+            "Caught SIGTERM, shutting down",
+            CFG["bedwetter"].getboolean("notify_on_service"),
+        )
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, shutdown)
+
     try:
         client.loop_forever()
     except KeyboardInterrupt:
-        logger.info("KeyboardInterrupt received, shutting down")
+        LOGGER.info("KeyboardInterrupt received, shutting down")
         client.disconnect()
         sys.exit(0)
 

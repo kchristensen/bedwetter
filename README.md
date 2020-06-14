@@ -23,6 +23,7 @@ and contains something along the lines of:
 ```ini
 [bedwetter]
 cron_schedule = 0 8 * * *
+debug = true
 latitude = <The latitude of your garden>
 log_file = /var/log/bedwetter.log
 log_to_file = true
@@ -40,9 +41,7 @@ threshold_days = 2
 threshold_percent = 50
 timeout = 5
 water_duration = 600
-weather_api = <darksky|weatherflow>
 weatherflow_api_key = <Your WeatherFlow API key>
-weatherflow_station_id = <Your WeatherFlow Station ID>
 ```
 
 It should be noted that this project is a bit rough around the edges as I didn't really
@@ -51,8 +50,3 @@ intend to distribute it, but I thought people might be interested in it.
 ## Installation
 
 Bedwetter makes use of pip and virtualenv, so install those via your system's package manager first. Then it's just a matter of running `make install` in the root of this project.
-
-## TODO
-
-* Add ability to skip the next watering based on an MQTT message (wateringSkip)
-* Add ability to stop the current watering based on an MQTT message (wateringStop)
