@@ -19,7 +19,8 @@ ${VIRTUALENV_DIR}/bedwetter:
 
 .PHONY: lint
 lint:
-	-bandit -r .
-	-black bedwetter
+	source ${VIRTUALENV_DIR}/bedwetter/bin/activate && \
+		bandit -r . && \
+		black bedwetter \
 
 .DEFAULT_GOAL := install
