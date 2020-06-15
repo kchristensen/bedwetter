@@ -143,7 +143,8 @@ def cron_check(kill, skip):
             LOGGER.info("Received kill signal, killing cron check thread")
             break
         time_until_cron = cron.next(default_utc=False)
-        LOGGER.info("Time until cron: %s seconds", int(time_until_cron))
+        if CFG["bedwetter"].getboolean("debug"):
+            LOGGER.debug("Time until cron: %s seconds", int(time_until_cron))
         if time_until_cron <= sleep_interval:
             # Sleep until it's closer to cron time to avoid a possible race
             sleep(time_until_cron)
@@ -274,10 +275,7 @@ def on_message(client, userdata, msg):
         LOGGER.info("Received wateringStop mqtt message")
         if not water_off():
             log_and_publish(
-                client,
-                "wateringRunaway",
-                "Watering failed to stop!",
-                CFG["bedwetter"].getboolean("notify_on_failure"),
+                client, "wateringRunaway", "Watering failed to stop", True,
             )
 
 
@@ -404,6 +402,13 @@ def main():
             "Caught SIGTERM, shutting down",
             CFG["bedwetter"].getboolean("notify_on_service"),
         )
+        if not water_off():
+            log_and_publish(
+                client,
+                "wateringRunaway",
+                "Watering failed to stop during shutdown",
+                True,
+            )
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, shutdown)
