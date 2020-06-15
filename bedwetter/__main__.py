@@ -252,6 +252,11 @@ def on_message(client, userdata, msg):
                 "Watering failed",
                 CFG["bedwetter"].getboolean("notify_on_failure"),
             )
+        # Always notify if we runaway
+        if not water_off():
+            log_and_publish(
+                client, "wateringRunaway", "Watering failed to stop", True,
+            )
         else:
             log_and_publish(
                 client,
