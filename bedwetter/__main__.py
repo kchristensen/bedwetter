@@ -93,8 +93,8 @@ def cb_on_message(client, userdata, msg):
             duration = CFG["bedwetter"].getint("watering_duration")
         else:
             duration = int(msg.payload)
-        water_on(client, duration)
-        water_off(client)
+        water_on(duration)
+        water_off()
     elif "event/wateringSkip" in msg.topic:
         LOGGER.info("Received wateringSkip mqtt message")
         if CRON_THREAD.is_alive():
@@ -104,7 +104,7 @@ def cb_on_message(client, userdata, msg):
     elif "event/wateringStop" in msg.topic:
         # This won't actually interrupt water_on() which blocks the read loop
         LOGGER.info("Received wateringStop mqtt message")
-        water_off(client)
+        water_off()
 
 
 def check_if_watering():
