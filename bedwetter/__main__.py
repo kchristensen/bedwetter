@@ -395,10 +395,10 @@ def main():
     signal.signal(signal.SIGTERM, shutdown)
 
     try:
-        client.loop_forever()
+        main_client.loop_forever()
     except KeyboardInterrupt:
         LOGGER.info("KeyboardInterrupt received, shutting down")
-        client.disconnect()
+        main_client.disconnect()
         sys.exit(0)
 
 
