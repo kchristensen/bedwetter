@@ -8,16 +8,18 @@ setup(
         [console_scripts]
         bedwetter=bedwetter.__main__:main
     """,
+    extras_require={"dev": ["mock"]},
     include_package_data=True,
     install_requires=[
-        'automationhat ; platform_system=="Linux"',
+        "automationhat ; platform_system=='Linux'",
+        "crontab",
         "configparser",
         "paho-mqtt",
         "requests",
-        'smbus ; platform_system=="Linux"',
+        "smbus ; platform_system=='Linux'",
     ],
     name="bedwetter",
     packages=["bedwetter"],
     package_data={"": ["ssl/letsencrypt-root.pem"]},
-    version="1.5.0",
+    version="2.0.0",
 )

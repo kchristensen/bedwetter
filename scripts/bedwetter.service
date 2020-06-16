@@ -1,0 +1,12 @@
+[Unit]
+Description=bedwetter
+After=network.target
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutSec=180
+ExecStart=/root/.virtualenv/bedwetter/bin/bedwetter
+
+[Install]
+WantedBy=multi-user.target

@@ -5,7 +5,7 @@ VIRTUALENV_DIR = ${HOME}/.virtualenv
 dev: ${VIRTUALENV_DIR}/bedwetter
 	source ${VIRTUALENV_DIR}/bedwetter/bin/activate && \
 		pip3 install -U bandit black pip && \
-		pip3 install --editable .
+		pip3 install --editable .[dev]
 
 .PHONY: install
 install: ${VIRTUALENV_DIR}/bedwetter
@@ -19,7 +19,8 @@ ${VIRTUALENV_DIR}/bedwetter:
 
 .PHONY: lint
 lint:
-	-bandit -r .
-	-black bedwetter
+	source ${VIRTUALENV_DIR}/bedwetter/bin/activate && \
+		bandit -r . && \
+		black bedwetter \
 
 .DEFAULT_GOAL := install
