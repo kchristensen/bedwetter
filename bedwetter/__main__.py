@@ -49,9 +49,10 @@ def cb_on_connect(client, userdata, flags, rc):
     client.subscribe(f'{CFG["bedwetter"]["mqtt_topic"]}/#')
     if "cron_schedule" in CFG["bedwetter"] and CFG["bedwetter"]["cron_schedule"]:
         global CRON_KILL
+        global CRON_SKIP
         global CRON_THREAD
         CRON_KILL = False
-        set_cron_skip(False)
+        CRON_SKIP = False
         CRON_THREAD = threading.Thread(
             target=cron_check, args=(lambda: CRON_KILL, lambda: CRON_SKIP,)
         )
@@ -96,8 +97,8 @@ def cb_on_message(client, userdata, msg):
         water_off(client)
     elif "wateringSkip" in msg.topic:
         if CRON_THREAD.is_alive():
-            LOGGER.info("Skipping the next automatic watering")
-            set_cron_skip(True)
+            global CRON_SKIP
+            CRON_SKIP = True
     elif "wateringStop" in msg.topic:
         # This won't actually interrupt water_on() which blocks the read loop
         LOGGER.info("Received wateringStop mqtt message")
@@ -209,7 +210,8 @@ def cron_check(kill, skip):
             if not skip():
                 check_if_watering(cron_client)
             else:
-                set_cron_skip(False)
+                global CRON_SKIP
+                CRON_SKIP = False
                 log_and_publish(
                     cron_client,
                     "wateringSkipped",
@@ -265,17 +267,7 @@ def publish(client, topic, payload):
         retain=False,
     )
     if return_code != 0:
-        LOGGER.error("Unable to publish mqtt message, return code is %s", rc)
-
-
-def set_cron_skip(value):
-    """ Update CRON_SKIP variable and optionally update CRON_THREAD """
-    global CRON_SKIP
-    LOGGER.info("Setting cron skip value to %s", value)
-    CRON_SKIP = value
-    if value:
-        # If we're setting this to True, we want to update the cron thread also
-        CRON_THREAD.join()
+        LOGGER.error("Unable to publish mqtt message, return code is %s", return_code)
 
 
 def setup_logger():
