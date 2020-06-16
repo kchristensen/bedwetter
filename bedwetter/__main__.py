@@ -46,7 +46,7 @@ LOGGER = None
 def cb_on_connect(client, userdata, flags, rc):
     """ Connect to mqtt broker and subscribe to the bedwetter topic """
     LOGGER.info("Connected to the mqtt broker")
-    client.subscribe(f'{CFG["bedwetter"]["mqtt_topic"]}/#')
+    client.subscribe(f'{CFG["bedwetter"]["mqtt_topic"]}/event/#')
     if "cron_schedule" in CFG["bedwetter"] and CFG["bedwetter"]["cron_schedule"]:
         global CRON_KILL
         global CRON_SKIP
@@ -107,7 +107,7 @@ def cb_on_message(client, userdata, msg):
         water_off(client)
 
 
-def check_if_watering(client):
+def check_if_watering():
     """ Check if we should water today, and if so water """
     LOGGER.info("Checking if we're going to water today.")
     water = False
@@ -120,7 +120,7 @@ def check_if_watering(client):
         )
         water = True
     else:
-        forecast = fetch_forecast(client)["forecast"]["daily"]
+        forecast = fetch_forecast()["forecast"]["daily"]
         for day in forecast:
             if day["day_num"] == int(strftime("%d")) and day[
                 "precip_probability"
@@ -132,11 +132,10 @@ def check_if_watering(client):
                 water = True
     if water:
         publish(
-            client, "event/wateringStart", CFG["bedwetter"].getint("water_duration"),
+            "event/wateringStart", CFG["bedwetter"].getint("water_duration"),
         )
     else:
         log_and_publish(
-            client,
             "log/wateringSkipped",
             "Not watering today",
             CFG["bedwetter"].getboolean("notify_on_inaction"),
@@ -153,7 +152,7 @@ def config_load():
         sys.exit(f"Unable to read from configuration file {config_file}")
 
 
-def config_update(client):
+def config_update():
     """ Updates the config file with any changes that have been made """
     config_file = os.path.expanduser("~/.config/bedwetter/bedwetter.cfg")
     try:
@@ -161,7 +160,6 @@ def config_update(client):
             CFG.write(cfg_handle)
     except EnvironmentError:
         log_and_publish(
-            client,
             "log/wateringFailure",
             "Could not write to configuration file {config_file}",
             CFG["bedwetter"].getboolean("notify_on_failure"),
@@ -187,17 +185,6 @@ def cron_check(kill, skip):
         "Started thread to water on schedule (%s)", CFG["bedwetter"]["cron_schedule"]
     )
 
-    cron_client = create_paho_client()
-    try:
-        cron_client.connect(
-            CFG["bedwetter"]["mqtt_server"],
-            port=CFG["bedwetter"].getint("mqtt_port"),
-            keepalive=60,
-        )
-    # Paho swallows exceptions so I doubt this even works
-    except Exception as paho_e:
-        LOGGER.info("Unable to connect to mqtt broker, %s", paho_e)
-
     cron = CronTab(f'{CFG["bedwetter"]["cron_schedule"]}')
     # The higher this value is, the longer it takes to kill this thread
     sleep_interval = 10
@@ -212,12 +199,11 @@ def cron_check(kill, skip):
             # Sleep until it's closer to cron time to avoid a possible race
             sleep(time_until_cron)
             if not skip():
-                check_if_watering(cron_client)
+                check_if_watering()
             else:
                 global CRON_SKIP
                 CRON_SKIP = False
                 log_and_publish(
-                    cron_client,
                     "log/wateringSkipped",
                     "Watering skipped",
                     CFG["bedwetter"].getboolean("notify_on_inaction"),
@@ -226,7 +212,7 @@ def cron_check(kill, skip):
             sleep(sleep_interval)
 
 
-def fetch_forecast(client):
+def fetch_forecast():
     """ Fetch a weather forecast from WeatherFlow """
     try:
         weatherflow_url = (
@@ -241,29 +227,38 @@ def fetch_forecast(client):
         return request.json()
     except requests.exceptions.ConnectTimeout:
         log_and_publish(
-            client,
             "log/wateringFailure",
             f'Error: WeatherFlow API timed out after {CFG["bedwetter"]["timeout"]} seconds',
             CFG["bedwetter"].getboolean("notify_on_failure"),
         )
     except requests.exceptions.RequestException:
         log_and_publish(
-            client,
             "log/wateringFailure",
             "Error: There was an error connecting to the WeatherFlow API",
             CFG["bedwetter"].getboolean("notify_on_failure"),
         )
 
 
-def log_and_publish(client, topic, payload, publish_message=True):
+def log_and_publish(topic, payload, publish_message=True):
     """ Log a message to the logger, and optionally publish to mqtt """
     LOGGER.info(payload)
     if publish_message:
-        publish(client, topic, payload)
+        publish(topic, payload)
 
 
-def publish(client, topic, payload):
+def publish(topic, payload):
     """ Publish messages to mqtt """
+    client = create_paho_client()
+    try:
+        client.connect(
+            CFG["bedwetter"]["mqtt_server"],
+            port=CFG["bedwetter"].getint("mqtt_port"),
+            keepalive=60,
+        )
+    # Paho swallows exceptions so I doubt this even works
+    except Exception as paho_e:
+        LOGGER.info("Unable to connect to mqtt broker, %s", paho_e)
+
     (return_code, _) = client.publish(
         f'{CFG["bedwetter"]["mqtt_topic"]}/{topic}',
         payload=payload,
@@ -272,6 +267,7 @@ def publish(client, topic, payload):
     )
     if return_code != 0:
         LOGGER.error("Unable to publish mqtt message, return code is %s", return_code)
+    client.disconnect()
 
 
 def setup_logger():
@@ -299,7 +295,7 @@ def setup_logger():
     return logger
 
 
-def water_off(client):
+def water_off():
     """ Stop watering """
     try:
         import automationhat
@@ -311,11 +307,11 @@ def water_off(client):
     automationhat.relay.one.off()
     if not automationhat.relay.one.is_off():
         log_and_publish(
-            client, "log/wateringRunaway", "Watering failed to stop",
+            "log/wateringRunaway", "Watering failed to stop",
         )
 
 
-def water_on(client, duration):
+def water_on(duration):
     """ Start watering """
     try:
         import automationhat
@@ -328,16 +324,14 @@ def water_on(client, duration):
     sleep(duration)
     if automationhat.relay.one.is_on():
         log_and_publish(
-            client,
             "log/wateringSuccess",
             "Watering succeeded",
             CFG["bedwetter"].getboolean("notify_on_success"),
         )
         CFG["bedwetter"]["last_water"] = f"{time():.0f}"
-        config_update(client)
+        config_update()
     else:
         log_and_publish(
-            client,
             "log/wateringFailure",
             "Watering failed to start",
             CFG["bedwetter"].getboolean("notify_on_failure"),
@@ -354,13 +348,13 @@ def main():
     LOGGER = setup_logger()
 
     # Create main thread mqtt client and setup callbacks
-    main_client = create_paho_client()
-    main_client.on_connect = cb_on_connect
-    main_client.on_disconnect = cb_on_disconnect
-    main_client.on_log = cb_on_log
-    main_client.on_message = cb_on_message
+    client = create_paho_client()
+    client.on_connect = cb_on_connect
+    client.on_disconnect = cb_on_disconnect
+    client.on_log = cb_on_log
+    client.on_message = cb_on_message
     try:
-        main_client.connect(
+        client.connect(
             CFG["bedwetter"]["mqtt_server"],
             port=CFG["bedwetter"].getint("mqtt_port"),
             keepalive=60,
@@ -370,7 +364,6 @@ def main():
         LOGGER.info("Unable to connect to mqtt broker, %s", paho_e)
 
     log_and_publish(
-        main_client,
         "log/startingUp",
         "Startup has completed",
         CFG["bedwetter"].getboolean("notify_on_service"),
@@ -379,22 +372,21 @@ def main():
     # Catch SIGTERM when being run via Systemd
     def shutdown(*args):
         log_and_publish(
-            main_client,
             "log/shuttingDown",
             "Caught SIGTERM, shutting down",
             CFG["bedwetter"].getboolean("notify_on_service"),
         )
         # Make sure water is off before we exit
-        water_off(main_client)
+        water_off()
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, shutdown)
 
     try:
-        main_client.loop_forever()
+        client.loop_forever()
     except KeyboardInterrupt:
         LOGGER.info("KeyboardInterrupt received, shutting down")
-        main_client.disconnect()
+        client.disconnect()
         sys.exit(0)
 
 
