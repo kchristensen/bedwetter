@@ -87,7 +87,7 @@ def cb_on_log(client, userdata, level, buf):
 
 def cb_on_message(client, userdata, msg):
     """ On receipt of a message, do stuff """
-    if "wateringStart" in msg.topic:
+    if "event/wateringStart" in msg.topic:
         LOGGER.info("Received wateringStart mqtt message")
         if not msg.payload:
             duration = CFG["bedwetter"].getint("watering_duration")
@@ -95,13 +95,13 @@ def cb_on_message(client, userdata, msg):
             duration = int(msg.payload)
         water_on(client, duration)
         water_off(client)
-    elif "wateringSkip" in msg.topic:
+    elif "event/wateringSkip" in msg.topic:
         LOGGER.info("Received wateringSkip mqtt message")
         if CRON_THREAD.is_alive():
             global CRON_SKIP
             CRON_SKIP = True
             LOGGER.info("Skipping next automated watering")
-    elif "wateringStop" in msg.topic:
+    elif "event/wateringStop" in msg.topic:
         # This won't actually interrupt water_on() which blocks the read loop
         LOGGER.info("Received wateringStop mqtt message")
         water_off(client)
@@ -132,12 +132,12 @@ def check_if_watering(client):
                 water = True
     if water:
         publish(
-            client, "wateringStart", CFG["bedwetter"].getint("water_duration"),
+            client, "event/wateringStart", CFG["bedwetter"].getint("water_duration"),
         )
     else:
         log_and_publish(
             client,
-            "wateringSkipped",
+            "log/wateringSkipped",
             "Not watering today",
             CFG["bedwetter"].getboolean("notify_on_inaction"),
         )
@@ -162,7 +162,7 @@ def config_update(client):
     except EnvironmentError:
         log_and_publish(
             client,
-            "wateringFailure",
+            "log/wateringFailure",
             "Could not write to configuration file {config_file}",
             CFG["bedwetter"].getboolean("notify_on_failure"),
         )
@@ -218,7 +218,7 @@ def cron_check(kill, skip):
                 CRON_SKIP = False
                 log_and_publish(
                     cron_client,
-                    "wateringSkipped",
+                    "log/wateringSkipped",
                     "Watering skipped",
                     CFG["bedwetter"].getboolean("notify_on_inaction"),
                 )
@@ -242,14 +242,14 @@ def fetch_forecast(client):
     except requests.exceptions.ConnectTimeout:
         log_and_publish(
             client,
-            "wateringFailure",
+            "log/wateringFailure",
             f'Error: WeatherFlow API timed out after {CFG["bedwetter"]["timeout"]} seconds',
             CFG["bedwetter"].getboolean("notify_on_failure"),
         )
     except requests.exceptions.RequestException:
         log_and_publish(
             client,
-            "wateringFailure",
+            "log/wateringFailure",
             "Error: There was an error connecting to the WeatherFlow API",
             CFG["bedwetter"].getboolean("notify_on_failure"),
         )
@@ -265,7 +265,7 @@ def log_and_publish(client, topic, payload, publish_message=True):
 def publish(client, topic, payload):
     """ Publish messages to mqtt """
     (return_code, _) = client.publish(
-        f'{CFG["bedwetter"]["mqtt_topic"]}/event/{topic}',
+        f'{CFG["bedwetter"]["mqtt_topic"]}/{topic}',
         payload=payload,
         qos=0,
         retain=False,
@@ -311,7 +311,7 @@ def water_off(client):
     automationhat.relay.one.off()
     if not automationhat.relay.one.is_off():
         log_and_publish(
-            client, "wateringRunaway", "Watering failed to stop",
+            client, "log/wateringRunaway", "Watering failed to stop",
         )
 
 
@@ -329,7 +329,7 @@ def water_on(client, duration):
     if automationhat.relay.one.is_on():
         log_and_publish(
             client,
-            "wateringSuccess",
+            "log/wateringSuccess",
             "Watering succeeded",
             CFG["bedwetter"].getboolean("notify_on_success"),
         )
@@ -338,7 +338,7 @@ def water_on(client, duration):
     else:
         log_and_publish(
             client,
-            "wateringFailure",
+            "log/wateringFailure",
             "Watering failed to start",
             CFG["bedwetter"].getboolean("notify_on_failure"),
         )
@@ -371,7 +371,7 @@ def main():
 
     log_and_publish(
         main_client,
-        "startingUp",
+        "log/startingUp",
         "Startup has completed",
         CFG["bedwetter"].getboolean("notify_on_service"),
     )
@@ -380,7 +380,7 @@ def main():
     def shutdown(*args):
         log_and_publish(
             main_client,
-            "shuttingDown",
+            "log/shuttingDown",
             "Caught SIGTERM, shutting down",
             CFG["bedwetter"].getboolean("notify_on_service"),
         )
