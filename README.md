@@ -22,7 +22,6 @@ and contains something along the lines of:
 
 ```ini
 [bedwetter]
-cron_schedule = 0 8 * * *
 debug = true
 latitude = <The latitude of your garden>
 log_file = /var/log/bedwetter.log
@@ -37,6 +36,7 @@ notify_on_failure = true
 notify_on_inaction = true
 notify_on_service = true
 notify_on_success = true
+schedule = 0 8 * * *
 threshold_days = 2
 threshold_percent = 50
 timeout = 5

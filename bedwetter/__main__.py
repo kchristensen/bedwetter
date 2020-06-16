@@ -47,7 +47,7 @@ def cb_on_connect(client, userdata, flags, rc):
     """ Connect to mqtt broker and subscribe to the bedwetter topic """
     LOGGER.info("Connected to the mqtt broker")
     client.subscribe(f'{CFG["bedwetter"]["mqtt_topic"]}/event/#')
-    if "cron_schedule" in CFG["bedwetter"] and CFG["bedwetter"]["cron_schedule"]:
+    if "schedule" in CFG["bedwetter"] and CFG["bedwetter"]["schedule"]:
         global CRON_KILL
         global CRON_SKIP
         global CRON_THREAD
@@ -77,12 +77,6 @@ def cb_on_disconnect(client, userdata, rc):
             CRON_THREAD.join()
     except NameError:
         pass
-
-
-def cb_on_log(client, userdata, level, buf):
-    """ Log Paho debug information """
-    if CFG["bedwetter"].getboolean("debug"):
-        LOGGER.debug(buf)
 
 
 def cb_on_message(client, userdata, msg):
@@ -182,10 +176,10 @@ def create_paho_client():
 def cron_check(kill, skip):
     """ Poll until it is time to trigger a watering """
     LOGGER.info(
-        "Started thread to water on schedule (%s)", CFG["bedwetter"]["cron_schedule"]
+        "Started thread to water on schedule (%s)", CFG["bedwetter"]["schedule"]
     )
 
-    cron = CronTab(f'{CFG["bedwetter"]["cron_schedule"]}')
+    cron = CronTab(f'{CFG["bedwetter"]["schedule"]}')
     # The higher this value is, the longer it takes to kill this thread
     sleep_interval = 10
     while True:
@@ -266,7 +260,7 @@ def publish(topic, payload):
         retain=False,
     )
     if return_code != 0:
-        LOGGER.error("Unable to publish mqtt message, return code is %s", return_code)
+        LOGGER.error("Unable to publish message, return code is %s", return_code)
     client.disconnect()
 
 
@@ -351,8 +345,13 @@ def main():
     client = create_paho_client()
     client.on_connect = cb_on_connect
     client.on_disconnect = cb_on_disconnect
-    client.on_log = cb_on_log
     client.on_message = cb_on_message
+
+    # Enable Paho logging using standard logger interface
+    if CFG["bedwetter"].getboolean("debug"):
+        client.enable_logger(logger=LOGGER)
+
+    # Connect to mqtt broker
     try:
         client.connect(
             CFG["bedwetter"]["mqtt_server"],
