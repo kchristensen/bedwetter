@@ -143,7 +143,7 @@ def config_load():
     CFG = ConfigParser()
     CFG.read(config_file)
     if "bedwetter" not in CFG:
-        sys.exit(f"Unable to read from configuration file {config_file}")
+        sys.exit(f"Fatal Error: Unable to read from configuration file {config_file}")
 
 
 def config_update():
