@@ -168,12 +168,12 @@ def config_update(client):
 def create_paho_client():
     """ Setup and create a Paho client """
     # Paho is not thread safe, so we'll end up making a few clients
-    client = mqtt_client.Client()
-    client.tls_set(ca_certs=f"{os.path.dirname(__file__)}/ssl/letsencrypt-root.pem")
-    client.username_pw_set(
+    paho_client = mqtt_client.Client()
+    paho_client.tls_set(ca_certs=f"{os.path.dirname(__file__)}/ssl/letsencrypt-root.pem")
+    paho_client.username_pw_set(
         CFG["bedwetter"]["mqtt_username"], CFG["bedwetter"]["mqtt_password"],
     )
-    return client
+    return paho_client
 
 
 def cron_check(kill, skip):
@@ -269,12 +269,12 @@ def publish(client, topic, payload):
 
 
 def set_cron_skip(value):
-    """ Update CRON_SKIP variable globally and optionally update CRON_THREAD """
+    """ Update CRON_SKIP variable and optionally update CRON_THREAD """
     global CRON_SKIP
     LOGGER.info("Setting cron skip value to %s", value)
     CRON_SKIP = value
     if value:
-        # If we're setting this to True, we're going to want to update the cron thread
+        # If we're setting this to True, we want to update the cron thread also
         CRON_THREAD.join()
 
 
@@ -358,13 +358,13 @@ def main():
     LOGGER = setup_logger()
 
     # Create main thread mqtt client and setup callbacks
-    client = create_paho_client()
-    client.on_connect = cb_on_connect
-    client.on_disconnect = cb_on_disconnect
-    client.on_log = cb_on_log
-    client.on_message = cb_on_message
+    main_client = create_paho_client()
+    main_client.on_connect = cb_on_connect
+    main_client.on_disconnect = cb_on_disconnect
+    main_client.on_log = cb_on_log
+    main_client.on_message = cb_on_message
     try:
-        client.connect(
+        main_client.connect(
             CFG["bedwetter"]["mqtt_server"],
             port=CFG["bedwetter"].getint("mqtt_port"),
             keepalive=60,
@@ -374,7 +374,7 @@ def main():
         LOGGER.info("Unable to connect to mqtt broker, %s", paho_e)
 
     log_and_publish(
-        client,
+        main_client,
         "startingUp",
         "Startup has completed",
         CFG["bedwetter"].getboolean("notify_on_service"),
@@ -383,13 +383,13 @@ def main():
     # Catch SIGTERM when being run via Systemd
     def shutdown(*args):
         log_and_publish(
-            client,
+            main_client,
             "shuttingDown",
             "Caught SIGTERM, shutting down",
             CFG["bedwetter"].getboolean("notify_on_service"),
         )
         # Make sure water is off before we exit
-        water_off(client)
+        water_off(main_client)
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, shutdown)
