@@ -8,6 +8,7 @@ setup(
         [console_scripts]
         bedwetter=bedwetter.__main__:main
     """,
+    extras_require={"dev": ["mock"]},
     include_package_data=True,
     install_requires=[
         "automationhat ; platform_system=='Linux'",
@@ -17,7 +18,6 @@ setup(
         "requests",
         "smbus ; platform_system=='Linux'",
     ],
-    extras_require={"dev": ["mock"]},
     name="bedwetter",
     packages=["bedwetter"],
     package_data={"": ["ssl/letsencrypt-root.pem"]},
