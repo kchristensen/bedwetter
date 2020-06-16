@@ -96,9 +96,11 @@ def cb_on_message(client, userdata, msg):
         water_on(client, duration)
         water_off(client)
     elif "wateringSkip" in msg.topic:
+        LOGGER.info("Received wateringSkip mqtt message")
         if CRON_THREAD.is_alive():
             global CRON_SKIP
             CRON_SKIP = True
+            LOGGER.info("Skipping next automated watering")
     elif "wateringStop" in msg.topic:
         # This won't actually interrupt water_on() which blocks the read loop
         LOGGER.info("Received wateringStop mqtt message")
@@ -170,7 +172,9 @@ def create_paho_client():
     """ Setup and create a Paho client """
     # Paho is not thread safe, so we'll end up making a few clients
     paho_client = mqtt_client.Client()
-    paho_client.tls_set(ca_certs=f"{os.path.dirname(__file__)}/ssl/letsencrypt-root.pem")
+    paho_client.tls_set(
+        ca_certs=f"{os.path.dirname(__file__)}/ssl/letsencrypt-root.pem"
+    )
     paho_client.username_pw_set(
         CFG["bedwetter"]["mqtt_username"], CFG["bedwetter"]["mqtt_password"],
     )
