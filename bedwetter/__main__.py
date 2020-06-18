@@ -347,9 +347,12 @@ def main():
     client.on_disconnect = cb_on_disconnect
     client.on_message = cb_on_message
 
-    # Enable Paho logging using standard logger interface
     if CFG["bedwetter"].getboolean("debug"):
+        # Enable Paho logging using standard logger interface
         client.enable_logger(logger=LOGGER)
+    else:
+        # Requests shouldn't be so chatty if we're not in debug
+        logging.getLogger("requests").setLevel(logging.WARNING)
 
     # Connect to mqtt broker
     try:
@@ -368,7 +371,7 @@ def main():
         CFG["bedwetter"].getboolean("notify_on_service"),
     )
 
-    # Catch SIGTERM when being run via Systemd
+    # Catch SIGTERM when being run non-interactively
     def shutdown(*args):
         log_and_publish(
             "log/shuttingDown",
