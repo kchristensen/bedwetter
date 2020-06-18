@@ -13,7 +13,7 @@ When it determines it should water the gardens (based on time since last water, 
 it activates the relay on the Automation Phat board, which triggers a relay attached to the rain barrel
 that runs an RV water pump for a predetermined amount of time.
 
-Additionally, I have it integrated with Home Assistant and Node-Red, so the MQTT messages it emits it will send
+Additionally, I have it integrated with [Home Assistant](https://www.home-assistant.io/) and [Node-Red](https://nodered.org/), so the MQTT messages it emits it will send
 me push notifications, and can handle Siri shortcuts to water, skip the next automated watering, or stop watering.
 
 ## Configuration
