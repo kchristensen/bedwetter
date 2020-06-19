@@ -29,6 +29,7 @@ import signal
 import sys
 import threading
 from configparser import ConfigParser
+from datetime import datetime
 from time import sleep, strftime, time
 
 import paho.mqtt.client as mqtt_client
@@ -324,7 +325,8 @@ def water_on(duration):
         )
         # Log and retain the last watering date
         CFG["bedwetter"]["last_water"] = f"{time():.0f}"
-        publish("log/wateringDate", CFG["bedwetter"]["last_water"], True)
+        # Home Assistant is really picky about date formats, so no timestamp
+        publish("log/wateringDate", datetime.now().isoformat(), True)
         config_update()
     else:
         log_and_publish(
