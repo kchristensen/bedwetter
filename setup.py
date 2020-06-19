@@ -15,6 +15,7 @@ setup(
         "crontab",
         "configparser",
         "paho-mqtt",
+        "python-dateutil",
         "requests",
         "smbus ; platform_system=='Linux'",
     ],

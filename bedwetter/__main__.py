@@ -35,6 +35,7 @@ from time import sleep, strftime, time
 import paho.mqtt.client as mqtt_client
 import requests
 from crontab import CronTab
+from dateutil.tz import tzlocal
 
 # Setup some global variables because I'm lazy
 CFG = None
@@ -326,7 +327,7 @@ def water_on(duration):
         # Log and retain the last watering date
         CFG["bedwetter"]["last_water"] = f"{time():.0f}"
         # Home Assistant is really picky about date formats, so no timestamp
-        publish("log/wateringDate", datetime.now().isoformat(), True)
+        publish("log/wateringDate", datetime.now(tzlocal()).isoformat(), True)
         config_update()
     else:
         log_and_publish(
