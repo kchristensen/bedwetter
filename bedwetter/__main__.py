@@ -240,7 +240,7 @@ def log_and_publish(topic, payload, publish_message=True):
         publish(topic, payload)
 
 
-def publish(topic, payload):
+def publish(topic, payload, retain=False):
     """ Publish messages to mqtt """
     client = create_paho_client()
     try:
@@ -257,7 +257,7 @@ def publish(topic, payload):
         f'{CFG["bedwetter"]["mqtt_topic"]}/{topic}',
         payload=payload,
         qos=0,
-        retain=False,
+        retain=retain,
     )
     if return_code != 0:
         LOGGER.error("Unable to publish message, return code is %s", return_code)
@@ -322,7 +322,9 @@ def water_on(duration):
             "Watering succeeded",
             CFG["bedwetter"].getboolean("notify_on_success"),
         )
+        # Log and retain the last watering date
         CFG["bedwetter"]["last_water"] = f"{time():.0f}"
+        publish("log/wateringDate", CFG["bedwetter"]["last_water"], True)
         config_update()
     else:
         log_and_publish(
