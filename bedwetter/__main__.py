@@ -42,6 +42,10 @@ CFG = None
 CRON_KILL = None
 CRON_SKIP = None
 CRON_THREAD = None
+WATER_DURATION = None
+WATER_KILL = None
+WATER_START = None
+WATER_THREAD = None
 LOGGER = None
 
 
@@ -62,6 +66,17 @@ def cb_on_connect(client, userdata, flags, rc):
         CRON_THREAD.start()
         if not CRON_THREAD.is_alive():
             LOGGER.error("Unable to start cron check process")
+
+        global WATER_KILL
+        global WATER_START
+        global WATER_THREAD
+        WATER_THREAD = threading.Thread(
+            target=water_check, args=(lambda: WATER_KILL, lambda: WATER_START,)
+        )
+        WATER_THREAD.daemon = True
+        WATER_THREAD.start()
+        if not WATER_THREAD.is_alive():
+            LOGGER.error("Unable to start water check process")
     else:
         LOGGER.info("Not starting cron check thread, cron time string is not set")
 
@@ -77,6 +92,11 @@ def cb_on_disconnect(client, userdata, rc):
             global CRON_KILL
             CRON_KILL = True
             CRON_THREAD.join()
+        if WATER_THREAD.is_alive():
+            LOGGER.info("Trying to kill water check, this can take a few seconds")
+            global WATER_KILL
+            WATER_KILL = True
+            WATER_THREAD.join()
     except NameError:
         pass
 
@@ -85,12 +105,13 @@ def cb_on_message(client, userdata, msg):
     """ On receipt of a message, do stuff """
     if "event/wateringStart" in msg.topic:
         LOGGER.info("Received wateringStart mqtt message")
+        global WATER_DURATION
+        global WATER_START
         if not msg.payload:
-            duration = CFG["bedwetter"].getint("watering_duration")
+            WATER_DURATION = CFG["bedwetter"].getint("watering_duration")
         else:
-            duration = int(msg.payload)
-        water_on(duration)
-        water_off()
+            WATER_DURATION = int(msg.payload)
+        WATER_START = True
     elif "event/wateringSkip" in msg.topic:
         LOGGER.info("Received wateringSkip mqtt message")
         if CRON_THREAD.is_alive():
@@ -100,7 +121,8 @@ def cb_on_message(client, userdata, msg):
     elif "event/wateringStop" in msg.topic:
         # This won't actually interrupt water_on() which blocks the read loop
         LOGGER.info("Received wateringStop mqtt message")
-        water_off()
+        global WATER_KILL
+        WATER_KILL = True
 
 
 def check_if_watering():
@@ -208,13 +230,34 @@ def cron_check(kill, skip):
             sleep(sleep_interval)
 
 
+def water_check(kill, start):
+    """ Poll until it is time to water """
+    LOGGER.info("Started thread to check for watering events")
+
+    # The higher this value is, the longer it takes to kill this thread
+    sleep_interval = 10
+    while True:
+        if kill():
+            LOGGER.info("Received kill signal, killing water check thread")
+
+            break
+        if start():
+            global WATER_START
+            WATER_START = False
+            LOGGER.info("Water on")
+            water_on(WATER_DURATION)
+            water_off()
+        else:
+            sleep(sleep_interval)
+
+
 def fetch_forecast():
     """ Fetch a weather forecast from WeatherFlow """
     try:
         weatherflow_url = (
             "https://swd.weatherflow.com/swd/rest/better_forecast/"
             f'?api_key={CFG["bedwetter"]["weatherflow_api_key"]}'
-            f'&lat={CFG["bedwetter"]["latitude"]}&lon={CFG["bedwetter"]["longitude"]}'
+            f'&station_id={CFG["bedwetter"]["station_id"]}'
         )
         request = requests.get(
             weatherflow_url, timeout=int(CFG["bedwetter"]["timeout"])
