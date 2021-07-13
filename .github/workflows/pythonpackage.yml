@@ -22,7 +22,7 @@ jobs:
         run: |
           make lint
       - name: Super Lint
-        uses: github/super-linter@v2.0.0
+        uses: github/super-linter@v4.4.1
         env:
           VALIDATE_ALL_CODEBASE: false
           VALIDATE_ANSIBLE: false
